@@ -11,9 +11,10 @@
 #    under the License.
 
 from oslo_config import cfg
+from oslo_log import log as logging
 
 from nova import exception
-from nova.i18n import _
+from nova.i18n import _, _LW
 from nova import utils
 from nova.virt.libvirt.volume import volume as libvirt_volume
 
@@ -28,6 +29,7 @@ volume_opts = [
 CONF = cfg.CONF
 CONF.register_opts(volume_opts, 'libvirt')
 
+LOG = logging.getLogger(__name__)
 
 class LibvirtNetVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
     """Driver to attach Network volumes to libvirt."""
@@ -102,6 +104,19 @@ class LibvirtNetVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
                                      netdisk_properties['secret_type'])
             conf.auth_secret_uuid = (conf.auth_secret_uuid or
                                      netdisk_properties['secret_uuid'])
+        if CONF.libvirt.virt_type == 'lxc':
+            conf_lxc = super(LibvirtNetVolumeDriver,
+                         self).get_config(connection_info, disk_info)
+            conf_lxc.source_type = "block"
+            conf_lxc.source_device = "disk"
+            conf_lxc.driver_name = "qemu"
+            conf_lxc.driver_format = "raw"
+            conf_lxc.source_path = self.nbd_dev
+            conf_lxc.target_dev = disk_info['dev']
+            conf_lxc.target_bus = "ide"
+            conf_lxc.serial = None
+            return conf_lxc
+
         return conf
 
     def disconnect_volume(self, connection_info, disk_dev):
@@ -109,3 +124,39 @@ class LibvirtNetVolumeDriver(libvirt_volume.LibvirtBaseVolumeDriver):
         super(LibvirtNetVolumeDriver,
               self).disconnect_volume(connection_info, disk_dev)
         self._delete_secret_by_name(connection_info)
+        if CONF.libvirt.virt_type == 'lxc':
+            if CONF.libvirt.rbd_map_type == 'kernel':
+                pool, image = connection_info['data']['name'].split('/')
+                _out, err = utils.trycmd('rbd', 'unmap', self.nbd_dev,
+                                         run_as_root=True,
+                                         discard_warnings=True)
+            elif CONF.libvirt.rbd_map_type == 'nbd':
+                pool, image = connection_info['data']['name'].split('/')
+                _out, err = utils.trycmd('rbd', 'nbd', 'unmap', self.nbd_dev,
+                                         discard_warnings=True,
+                                         run_as_root=True)
+            if err:
+                LOG.warning(_LW('Detaching from erroneous rbd device returned'
+                            'error: %s'), err)
+
+    def connect_volume(self, connection_info, disk_info):
+        super(LibvirtNetVolumeDriver,
+              self).connect_volume(connection_info, disk_info)
+        if CONF.libvirt.virt_type == 'lxc':
+            if CONF.libvirt.rbd_map_type == 'kernel':
+                pool, image = connection_info['data']['name'].split('/')
+                _out, err = utils.trycmd('rbd', '-p', pool,
+                                         'map', image,
+                                         discard_warnings=True,
+                                         run_as_root=True)
+                self.nbd_dev = _out.split('\n')[0]
+            elif CONF.libvirt.rbd_map_type == 'nbd':
+                pool, image = connection_info['data']['name'].split('/')
+                _out, err = utils.trycmd('rbd', '-p', pool,
+                                         'nbd', 'map', image,
+                                         run_as_root=True,
+                                         discard_warnings=True)
+                self.nbd_dev = _out.split('\n')[0]
+            if err:
+                LOG.warning(_LW('Attaching rbd device returned'
+                            'error: %s'), err)

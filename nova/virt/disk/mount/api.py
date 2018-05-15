@@ -75,8 +75,10 @@ class Mount(object):
             # motivated developers todo, since raising
             # an exception is on par with what this
             # code did historically
-            raise exception.UnsupportedImageModel(
-                image.__class__.__name__)
+            LOG.debug("Using RbdMount")
+            return importutils.import_object(
+                    "nova.virt.disk.mount.rbd.RbdMount",
+                    image, mountdir, partition)
 
     @staticmethod
     def instance_for_device(image, mountdir, partition, device):
@@ -252,6 +254,9 @@ class Mount(object):
         if not self.mounted:
             return
         self.flush_dev()
+        utils.execute(
+            'mount', '-o', 'remount,ro', self.mount_dir,
+            run_as_root=True)
         LOG.debug("Umount %s", self.mapped_device)
         utils.execute('umount', self.mapped_device, run_as_root=True)
         self.mounted = False

@@ -531,3 +531,44 @@ def is_mounted(mount_path, source=None):
 
 def is_valid_hostname(hostname):
     return re.match(r"^[\w\-\.:]+$", hostname)
+
+
+def _writeFile(value, filepath):
+    """Write the string to the cgroup."""
+    cmd = 'sh -c "echo {} > {}"'
+    cmd = cmd.format(value, filepath)
+
+    if not os.path.exists(filepath):
+        LOG.error(_LI('File write error: %s not exist'), filepath)
+    _out, err = utils.trycmd(cmd, run_as_root=True, shell=True)
+    if err:
+        error = _('file devices.allow write error: %s') % err
+        LOG.error(_LI('File write error: %s'), error)
+
+
+def _virGetDeviceNum(device):
+    dev_path = '/sys/block/' + device + '/dev'
+    if not os.path.isfile(dev_path):
+        LOG.error(_LI('Dev file of device %s is not exist.'), device)
+        return ""
+    with open(dev_path) as fp:
+        name = fp.readline()
+    st_dev = name.split('\n')[0]
+    return st_dev
+
+
+def virCgroupSetDevice(devname, instance_name):
+    devicesallow = "devices.allow"
+    base_path = '/sys/fs/cgroup/devices/machine'
+    instance_cg_name = instance_name + ".libvirt-lxc"
+    instance_cgroup_path = os.path.join(base_path, instance_cg_name)
+    if not os.path.isdir(instance_cgroup_path):
+        LOG.error(_LI('Device cgroup file %s not exist.'),
+                       instance_cgroup_path)
+
+    st_dev = _virGetDeviceNum(devname)
+    devcgvalue = "b " + st_dev + " rw"
+
+    for rootd, dirs, filen in os.walk(instance_cgroup_path):
+        file_path = os.path.join(rootd, devicesallow)
+        _writeFile(devcgvalue, file_path)

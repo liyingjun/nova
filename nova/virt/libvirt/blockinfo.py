@@ -139,7 +139,7 @@ def get_dev_prefix_for_disk_bus(disk_bus):
     elif disk_bus == "uml":
         return "ubd"
     elif disk_bus == "lxc":
-        return None
+        return "sd"
     elif disk_bus == "sata":
         return "sd"
     else:
@@ -307,6 +307,8 @@ def get_disk_bus_for_disk_dev(virt_type, disk_dev):
             return "scsi"
     elif disk_dev.startswith('vd'):
         return "virtio"
+    elif disk_dev.startswith('lx'):
+        return "lxc"
     elif disk_dev.startswith('fd'):
         return "fdc"
     elif disk_dev.startswith('xvd'):

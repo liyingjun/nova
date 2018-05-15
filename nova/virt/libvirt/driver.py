@@ -138,6 +138,10 @@ libvirt_opts = [
                default='kvm',
                choices=('kvm', 'lxc', 'qemu', 'uml', 'xen', 'parallels'),
                help='Libvirt domain type'),
+    cfg.StrOpt('rbd_map_type',
+               default='nbd',
+               choices=('nbd', 'kernel'),
+               help='The way of rbd map.'),
     cfg.StrOpt('connection_uri',
                default='',
                help='Override the default libvirt URI '
@@ -1344,6 +1348,16 @@ class LibvirtDriver(driver.ComputeDriver):
                                                        encryption)
                 encryptor.attach_volume(context, **encryption)
 
+            if CONF.libvirt.virt_type == 'lxc':
+                xml = conf.to_xml()
+                instance_dir = libvirt_utils.get_instance_path(instance)
+                xml_path = os.path.join(instance_dir, 'volume.xml')
+                libvirt_utils.write_to_file(xml_path, xml)
+
+                nbd_dev = conf.source_path
+                devname = nbd_dev.split('/')[2]
+                libvirt_utils.virCgroupSetDevice(devname, instance.name)
+
             guest.attach_device(conf, persistent=True, live=live)
         except Exception as ex:
             LOG.exception(_LE('Failed to attach volume at mountpoint: %s'),
@@ -2472,7 +2486,8 @@ class LibvirtDriver(driver.ComputeDriver):
         re-creates the domain to ensure the reboot happens, as the guest
         OS cannot ignore this action.
         """
-
+        if CONF.libvirt.virt_type == "lxc":
+            self._clean_shutdown(instance, 10, 0)
         self._destroy(instance)
 
         # Convert the system metadata to image metadata
@@ -3661,6 +3676,8 @@ class LibvirtDriver(driver.ComputeDriver):
 
         for vol in block_device.get_bdms_to_connect(block_device_mapping,
                                                    mount_rootfs):
+            if CONF.libvirt.virt_type == 'lxc':
+                continue
             connection_info = vol['connection_info']
             vol_dev = block_device.prepend_dev(vol['mount_device'])
             info = disk_mapping[vol_dev]
@@ -4763,14 +4780,21 @@ class LibvirtDriver(driver.ComputeDriver):
             root_disk = block_device.get_root_bdm(block_device_mapping)
             disk_info = blockinfo.get_info_from_bdm(
                 instance, CONF.libvirt.virt_type, image_meta, root_disk)
-            self._connect_volume(root_disk['connection_info'], disk_info)
-            disk_path = root_disk['connection_info']['data']['device_path']
+            if root_disk['connection_info']['driver_volume_type'] == 'rbd':
+                name = root_disk['connection_info']['data']['name'].split('/')
+                user = root_disk['connection_info']['data']['auth_username']
+                password = root_disk['connection_info']['data']['secret_uuid']
+                servers = root_disk['connection_info']['data']['hosts']
+                image_model = imgmodel.RBDImage(name[1], name[0], user, password, servers)
+            else:
+                self._connect_volume(root_disk['connection_info'], disk_info)
+                disk_path = root_disk['connection_info']['data']['device_path']
 
-            # NOTE(apmelton) - Even though the instance is being booted from a
-            # cinder volume, it is still presented as a local block device.
-            # LocalBlockImage is used here to indicate that the instance's
-            # disk is backed by a local block device.
-            image_model = imgmodel.LocalBlockImage(disk_path)
+                # NOTE(apmelton) - Even though the instance is being booted from a
+                # cinder volume, it is still presented as a local block device.
+                # LocalBlockImage is used here to indicate that the instance's
+# disk is backed by a local block device.
+                image_model = imgmodel.LocalBlockImage(disk_path)
         else:
             image = self.image_backend.image(instance, 'disk')
             image_model = image.get_model(self._conn)
@@ -4805,9 +4829,9 @@ class LibvirtDriver(driver.ComputeDriver):
             # NOTE(uni): Now the container is running with its own private
             # mount namespace and so there is no need to keep the container
             # rootfs mounted in the host namespace
-            LOG.debug('Attempting to unmount container filesystem: %s',
+            LOG.debug('Not attempting to unmount container filesystem: %s',
                       container_dir, instance=instance)
-            disk.clean_lxc_namespace(container_dir=container_dir)
+#            disk.clean_lxc_namespace(container_dir=container_dir)
         else:
             disk.teardown_container(container_dir=container_dir)
 

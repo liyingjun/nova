@@ -14,8 +14,10 @@
 """Support for mounting images with qemu-nbd."""
 
 import os
+import psutil
 import random
 import re
+import string
 import time
 
 from oslo_log import log as logging
@@ -40,11 +42,34 @@ class NbdMount(api.Mount):
         """Detect nbd device files."""
         return filter(NBD_DEVICE_RE.match, os.listdir('/sys/block/'))
 
+    def _nbd_hang_list(self):
+        """Check if jbd2/nbd* is still running."""
+        pid_list = psutil.pids()
+        device_list = []
+    # when process jbd2/nbd3-* exist,use nbd3 device case
+    # mount error.
+        for p in pid_list:
+            if not os.path.isdir("/proc/" + str(p)):
+                continue
+            try:
+                proce = psutil.Process(p)
+                if proce.cmdline() == ['']:
+                    if "jbd2/nbd" in proce.name():
+                        device = string.split(proce.name(), "/")
+                        device = string.split(device[1], "-")
+                        device_list.append(device[0])
+            except psutil.NoSuchProcess:
+                LOG.warning(_LW('Some process disappear.'))
+                pass
+        return device_list
+
     def _find_unused(self, devices):
+        device_list = self._nbd_hang_list()
         for device in devices:
             if not os.path.exists(os.path.join('/sys/block/', device, 'pid')):
                 if not os.path.exists('/var/lock/qemu-nbd-%s' % device):
-                    return device
+                    if device not in device_list:
+                        return device
                 else:
                     LOG.error(_LE('NBD error - previous umount did not '
                                   'cleanup /var/lock/qemu-nbd-%s.'), device)

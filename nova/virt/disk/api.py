@@ -439,6 +439,7 @@ def teardown_container(container_dir, container_root_device=None):
     try:
         img = _DiskImage(image=None, mount_dir=container_dir)
         img.teardown()
+        device = img._device_for_path(container_dir)
 
         # Make sure container_root_device is released when teardown container.
         if container_root_device:
@@ -446,9 +447,13 @@ def teardown_container(container_dir, container_root_device=None):
                 LOG.debug("Release loop device %s", container_root_device)
                 utils.execute('losetup', '--detach', container_root_device,
                               run_as_root=True, attempts=3)
-            elif 'nbd' in container_root_device:
+            elif 'nbd' in container_root_device and device:
                 LOG.debug('Release nbd device %s', container_root_device)
                 utils.execute('qemu-nbd', '-d', container_root_device,
+                              run_as_root=True)
+            elif 'rbd' in container_root_device:
+                LOG.debug('Release rbd device %s', container_root_device)
+                utils.execute('rbd', 'unmap', container_root_device,
                               run_as_root=True)
             else:
                 LOG.debug('No release necessary for block device %s' %
