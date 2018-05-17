@@ -138,6 +138,9 @@ libvirt_opts = [
                default='kvm',
                choices=('kvm', 'lxc', 'qemu', 'uml', 'xen', 'parallels'),
                help='Libvirt domain type'),
+    cfg.BoolOpt('sharefs_lxc',
+                default=True,
+                help='Whether to share fs to lxc container.'),
     cfg.StrOpt('connection_uri',
                default='',
                help='Override the default libvirt URI '
@@ -3600,6 +3603,17 @@ class LibvirtDriver(driver.ComputeDriver):
             fs.source_dir = os.path.join(
                 libvirt_utils.get_instance_path(instance), 'rootfs')
             devices.append(fs)
+            if CONF.libvirt.sharefs_lxc:
+                instance_share_path = os.path.join(
+                    CONF.shares_path + instance.project_id)
+                if not os.path.exists(instance_share_path):
+                    os.mkdir(instance_share_path)
+
+                sharefs = vconfig.LibvirtConfigGuestFilesys()
+                sharefs.source_type = "mount"
+                sharefs.source_dir = instance_share_path
+                sharefs.target_dir = "/mnt"
+                devices.append(sharefs)
         elif os_type == vm_mode.EXE and CONF.libvirt.virt_type == "parallels":
             if 'disk' in disk_mapping:
                 fs = self._get_guest_fs_config(instance, "disk")

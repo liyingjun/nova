@@ -116,6 +116,9 @@ compute_opts = [
     cfg.StrOpt('instances_path',
                default=paths.state_path_def('instances'),
                help='Where instances are stored on disk'),
+    cfg.StrOpt('shares_path',
+               default=paths.state_path_def('shares'),
+               help='Where share filesystem are stored on disk for lxc'),
     cfg.BoolOpt('instance_usage_audit',
                 default=False,
                 help="Generate periodic compute.instance.exists"
